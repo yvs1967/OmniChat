@@ -94,7 +94,29 @@ export async function getOrCreateRootFolder(customFolderId?: string): Promise<Dr
     }
   }
 
-  // Search for existing folder (OmniChat_Data or previously created WhatsApp_Web_Data)
+  // 1. Check for folder explicitly shared with me
+  try {
+    const sharedQ = `sharedWithMe = true and (name = '${ROOT_FOLDER_NAME}' or name = '${FALLBACK_FOLDER_NAME}') and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const sharedRes = await driveFetch(
+      `files?q=${encodeURIComponent(sharedQ)}&fields=files(id,name,webViewLink,shared,owners)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    );
+    const sharedData = await sharedRes.json();
+    if (sharedData.files && sharedData.files.length > 0) {
+      const folder = sharedData.files[0];
+      cachedRootFolderId = folder.id;
+      return {
+        id: folder.id,
+        name: folder.name,
+        webViewLink: folder.webViewLink,
+        isShared: true,
+        ownerEmail: folder.owners?.[0]?.emailAddress,
+      };
+    }
+  } catch (err) {
+    console.warn('Error checking sharedWithMe root folders:', err);
+  }
+
+  // 2. Search for existing folder in My Drive (OmniChat_Data or previously created WhatsApp_Web_Data)
   const q = `(name = '${ROOT_FOLDER_NAME}' or name = '${FALLBACK_FOLDER_NAME}') and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   const listRes = await driveFetch(`files?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink,shared,owners)&spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true`);
   const listData = await listRes.json();
@@ -237,31 +259,164 @@ export async function getOrCreateChatSubfolder(
 }
 
 /**
- * Read chats.json from Google Drive
+ * Save room metadata (room.json) directly inside the shared room subfolder
  */
-export async function fetchChatsFromDrive(rootFolderId: string): Promise<ChatRoom[]> {
-  const q = `'${rootFolderId}' in parents and name = '${CHATS_FILE_NAME}' and trashed = false`;
+export async function saveRoomMetadataToDrive(
+  roomFolderId: string,
+  chat: ChatRoom
+): Promise<void> {
+  const jsonContent = JSON.stringify(chat, null, 2);
+  const blob = new Blob([jsonContent], { type: 'application/json' });
+
+  // Check if room.json already exists in roomFolderId
+  const q = `'${roomFolderId}' in parents and (name = 'room.json' or name = 'chat.json') and trashed = false`;
   const listRes = await driveFetch(
-    `files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    `files?q=${encodeURIComponent(q)}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`
   );
   const listData = await listRes.json();
 
-  if (!listData.files || listData.files.length === 0) {
-    return [];
+  if (listData.files && listData.files.length > 0) {
+    const fileId = listData.files[0].id;
+    await driveFetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: blob,
+      }
+    );
+  } else {
+    const metadata = {
+      name: 'room.json',
+      parents: [roomFolderId],
+      mimeType: 'application/json',
+    };
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', blob);
+
+    await driveFetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true',
+      {
+        method: 'POST',
+        body: form,
+      }
+    );
   }
+}
 
-  const file = listData.files[0];
-  cachedChatsFileId = file.id;
-
-  const contentRes = await driveFetch(`files/${file.id}?alt=media&supportsAllDrives=true`);
-  const text = await contentRes.text();
+/**
+ * Fetch room metadata (room.json) from a shared room subfolder
+ */
+export async function fetchRoomMetadataFromDrive(
+  roomFolderId: string
+): Promise<ChatRoom | null> {
   try {
+    const q = `'${roomFolderId}' in parents and (name = 'room.json' or name = 'chat.json') and trashed = false`;
+    const listRes = await driveFetch(
+      `files?q=${encodeURIComponent(q)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    );
+    const listData = await listRes.json();
+    if (!listData.files || listData.files.length === 0) return null;
+
+    const file = listData.files[0];
+    const contentRes = await driveFetch(`files/${file.id}?alt=media&supportsAllDrives=true`);
+    const text = await contentRes.text();
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
+    if (parsed && parsed.id) {
+      return { ...parsed, driveFolderId: roomFolderId };
+    }
+    return null;
   } catch (err) {
-    console.error('Failed to parse chats.json from Drive:', err);
-    return [];
+    console.warn(`Could not read room.json from ${roomFolderId}:`, err);
+    return null;
   }
+}
+
+/**
+ * Read chats.json from Google Drive and discover any shared chat rooms
+ */
+export async function fetchChatsFromDrive(rootFolderId: string): Promise<ChatRoom[]> {
+  let rootChats: ChatRoom[] = [];
+
+  // 1. Read chats.json from user's root folder
+  if (rootFolderId) {
+    try {
+      const q = `'${rootFolderId}' in parents and name = '${CHATS_FILE_NAME}' and trashed = false`;
+      const listRes = await driveFetch(
+        `files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+      );
+      const listData = await listRes.json();
+
+      if (listData.files && listData.files.length > 0) {
+        const file = listData.files[0];
+        cachedChatsFileId = file.id;
+
+        const contentRes = await driveFetch(`files/${file.id}?alt=media&supportsAllDrives=true`);
+        const text = await contentRes.text();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          rootChats = parsed;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to parse chats.json from root folder:', err);
+    }
+  }
+
+  // 2. Discover shared chat room folders (owned by user or shared with user by someone else)
+  try {
+    const roomFolderQ = `mimeType = 'application/vnd.google-apps.folder' and name contains 'room_chat_' and trashed = false`;
+    const roomListRes = await driveFetch(
+      `files?q=${encodeURIComponent(roomFolderQ)}&fields=files(id,name,webViewLink,shared,owners)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    );
+    const roomListData = await roomListRes.json();
+
+    if (roomListData.files && roomListData.files.length > 0) {
+      let hasNewRooms = false;
+      for (const roomFolder of roomListData.files) {
+        try {
+          const roomMeta = await fetchRoomMetadataFromDrive(roomFolder.id);
+          if (roomMeta) {
+            roomMeta.driveFolderId = roomFolder.id;
+            const existingIdx = rootChats.findIndex((c) => c.id === roomMeta.id);
+            if (existingIdx >= 0) {
+              const existing = rootChats[existingIdx];
+              // Update metadata if room.json is fresher or missing driveFolderId
+              if ((roomMeta.lastMessage?.timestamp || 0) > (existing.lastMessage?.timestamp || 0)) {
+                rootChats[existingIdx] = {
+                  ...existing,
+                  ...roomMeta,
+                  driveFolderId: roomFolder.id,
+                };
+                hasNewRooms = true;
+              } else if (!existing.driveFolderId) {
+                rootChats[existingIdx].driveFolderId = roomFolder.id;
+                hasNewRooms = true;
+              }
+            } else {
+              // Discovered a new chat room shared with this user!
+              rootChats.push(roomMeta);
+              hasNewRooms = true;
+            }
+          }
+        } catch (rErr) {
+          console.warn(`Error reading metadata for room ${roomFolder.id}:`, rErr);
+        }
+      }
+
+      // If new rooms were discovered, save the updated merged list to user's root chats.json
+      if (hasNewRooms && rootFolderId) {
+        saveChatsToDrive(rootFolderId, rootChats).catch((err) =>
+          console.warn('Failed to cache merged chats.json:', err)
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Error querying shared room folders:', err);
+  }
+
+  return rootChats;
 }
 
 /**
@@ -334,42 +489,47 @@ export async function fetchMessagesFromDrive(
   subfolderId?: string
 ): Promise<ChatMessage[]> {
   const fileName = `messages_${chatId}.json`;
-  let fileId = cachedMessagesFileIds[chatId];
+  const cacheKey = `${subfolderId || rootFolderId}_${chatId}`;
+  let fileId = cachedMessagesFileIds[cacheKey];
 
   if (!fileId) {
-    // Check inside subfolder if specified
+    // 1. Check inside shared subfolder first if specified
     if (subfolderId) {
       try {
-        const qSub = `'${subfolderId}' in parents and name = '${fileName}' and trashed = false`;
+        const qSub = `'${subfolderId}' in parents and (name = '${fileName}' or name = 'messages.json') and trashed = false`;
         const listResSub = await driveFetch(
           `files?q=${encodeURIComponent(qSub)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`
         );
         const listDataSub = await listResSub.json();
         if (listDataSub.files && listDataSub.files.length > 0) {
           fileId = listDataSub.files[0].id;
-          cachedMessagesFileIds[chatId] = fileId;
+          cachedMessagesFileIds[cacheKey] = fileId;
         }
-      } catch {
-        // Fallback to checking root
+      } catch (err) {
+        console.warn(`Could not check messages in subfolder ${subfolderId}:`, err);
       }
     }
 
-    // Check inside root folder
-    if (!fileId) {
-      const q = `'${rootFolderId}' in parents and name = '${fileName}' and trashed = false`;
-      const listRes = await driveFetch(
-        `files?q=${encodeURIComponent(q)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`
-      );
-      const listData = await listRes.json();
+    // 2. Fallback to rootFolderId if not found in subfolder
+    if (!fileId && rootFolderId) {
+      try {
+        const q = `'${rootFolderId}' in parents and (name = '${fileName}' or name = 'messages.json') and trashed = false`;
+        const listRes = await driveFetch(
+          `files?q=${encodeURIComponent(q)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+        );
+        const listData = await listRes.json();
 
-      if (listData.files && listData.files.length > 0) {
-        fileId = listData.files[0].id;
-        cachedMessagesFileIds[chatId] = fileId;
-      } else {
-        return [];
+        if (listData.files && listData.files.length > 0) {
+          fileId = listData.files[0].id;
+          cachedMessagesFileIds[cacheKey] = fileId;
+        }
+      } catch (err) {
+        console.warn(`Could not check messages in root folder:`, err);
       }
     }
   }
+
+  if (!fileId) return [];
 
   try {
     const contentRes = await driveFetch(`files/${fileId}?alt=media&supportsAllDrives=true`);
@@ -383,7 +543,7 @@ export async function fetchMessagesFromDrive(
 }
 
 /**
- * Save messages array for a chat to Google Drive with merge support
+ * Save messages array for a chat to Google Drive
  */
 export async function saveMessagesToDrive(
   rootFolderId: string,
@@ -392,39 +552,25 @@ export async function saveMessagesToDrive(
   subfolderId?: string
 ): Promise<void> {
   const fileName = `messages_${chatId}.json`;
-  let fileId = cachedMessagesFileIds[chatId];
+  const targetParent = subfolderId || rootFolderId;
+  const cacheKey = `${targetParent}_${chatId}`;
+  let fileId = cachedMessagesFileIds[cacheKey];
   const jsonContent = JSON.stringify(messages, null, 2);
   const blob = new Blob([jsonContent], { type: 'application/json' });
-  const targetParent = subfolderId || rootFolderId;
 
   if (!fileId) {
-    if (subfolderId) {
-      try {
-        const qSub = `'${subfolderId}' in parents and name = '${fileName}' and trashed = false`;
-        const listResSub = await driveFetch(
-          `files?q=${encodeURIComponent(qSub)}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`
-        );
-        const listDataSub = await listResSub.json();
-        if (listDataSub.files && listDataSub.files.length > 0) {
-          fileId = listDataSub.files[0].id;
-          cachedMessagesFileIds[chatId] = fileId;
-        }
-      } catch {
-        // fallback
-      }
-    }
-
-    if (!fileId) {
-      const q = `'${rootFolderId}' in parents and name = '${fileName}' and trashed = false`;
+    try {
+      const q = `'${targetParent}' in parents and (name = '${fileName}' or name = 'messages.json') and trashed = false`;
       const listRes = await driveFetch(
         `files?q=${encodeURIComponent(q)}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`
       );
       const listData = await listRes.json();
-
       if (listData.files && listData.files.length > 0) {
         fileId = listData.files[0].id;
-        cachedMessagesFileIds[chatId] = fileId;
+        cachedMessagesFileIds[cacheKey] = fileId;
       }
+    } catch (err) {
+      console.warn(`Error finding messages file in ${targetParent}:`, err);
     }
   }
 
@@ -439,7 +585,7 @@ export async function saveMessagesToDrive(
       }
     );
   } else {
-    // Create file inside target folder
+    // Create file inside target parent (subfolder or root)
     const metadata = {
       name: fileName,
       parents: [targetParent],
@@ -458,7 +604,32 @@ export async function saveMessagesToDrive(
       }
     );
     const result = await createRes.json();
-    cachedMessagesFileIds[chatId] = result.id;
+    cachedMessagesFileIds[cacheKey] = result.id;
+  }
+
+  // Also update room.json inside subfolderId if available with the last message
+  if (subfolderId && messages.length > 0) {
+    const lastMsg = messages[messages.length - 1];
+    try {
+      const existingRoom = await fetchRoomMetadataFromDrive(subfolderId);
+      if (existingRoom) {
+        existingRoom.lastMessage = {
+          text: lastMsg.media
+            ? lastMsg.media.type === 'audio'
+              ? '🎤 Voice note'
+              : '📷 Photo'
+            : lastMsg.text,
+          timestamp: lastMsg.timestamp,
+          senderName: lastMsg.senderName,
+          senderEmail: lastMsg.senderEmail,
+          senderId: lastMsg.senderId,
+          status: lastMsg.status,
+        };
+        await saveRoomMetadataToDrive(subfolderId, existingRoom);
+      }
+    } catch (err) {
+      console.warn('Could not update room.json last message:', err);
+    }
   }
 }
 
@@ -565,15 +736,18 @@ export async function shareFolderWithEmail(
   emailAddress: string,
   role: 'writer' | 'reader' = 'writer'
 ): Promise<any> {
-  const res = await driveFetch(`files/${folderId}/permissions?sendNotificationEmail=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      role,
-      type: 'user',
-      emailAddress,
-    }),
-  });
+  const res = await driveFetch(
+    `files/${folderId}/permissions?sendNotificationEmail=false&supportsAllDrives=true`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        role,
+        type: 'user',
+        emailAddress,
+      }),
+    }
+  );
   return await res.json();
 }
 

@@ -23,6 +23,7 @@ import {
   ensureFolderInitialized,
   getOrCreateChatSubfolder,
   shareFolderWithEmail,
+  saveRoomMetadataToDrive,
 } from './services/driveSync';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
@@ -46,6 +47,12 @@ export default function App() {
   const [chats, setChats] = useState<ChatRoom[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messagesMap, setMessagesMap] = useState<Record<string, ChatMessage[]>>({});
+
+  // Active Refs to prevent stale closures in polling timer
+  const chatsRef = useRef(chats);
+  chatsRef.current = chats;
+  const selectedChatIdRef = useRef(selectedChatId);
+  selectedChatIdRef.current = selectedChatId;
 
   // User-specific contact aliases (e.g. Alex naming Bob "Bob Newyork")
   const [contactAliases, setContactAliases] = useState<Record<string, string>>(() => {
@@ -394,22 +401,29 @@ export default function App() {
         }
 
         // Sync active chat messages
-        if (selectedChatId) {
-          const targetChat = chats.find((c) => c.id === selectedChatId);
-          const remoteMsgs = await fetchMessagesFromDrive(folderId, selectedChatId, targetChat?.driveFolderId);
+        const currentActiveChatId = selectedChatIdRef.current;
+        if (currentActiveChatId) {
+          const targetChat =
+            latestChats.find((c) => c.id === currentActiveChatId) ||
+            chatsRef.current.find((c) => c.id === currentActiveChatId);
+          const remoteMsgs = await fetchMessagesFromDrive(
+            folderId,
+            currentActiveChatId,
+            targetChat?.driveFolderId
+          );
           if (remoteMsgs && remoteMsgs.length > 0) {
             setMessagesMap((prev) => {
-              const currentList = prev[selectedChatId] || [];
+              const currentList = prev[currentActiveChatId] || [];
               const mergedMap = new Map<string, ChatMessage>();
               currentList.forEach((m) => mergedMap.set(m.id, m));
               remoteMsgs.forEach((m) => mergedMap.set(m.id, m));
               const sorted = Array.from(mergedMap.values()).sort(
                 (a, b) => a.timestamp - b.timestamp
               );
-              return { ...prev, [selectedChatId]: sorted };
+              return { ...prev, [currentActiveChatId]: sorted };
             });
             // Auto mark incoming remote messages as read
-            markChatMessagesAsRead(selectedChatId, remoteMsgs);
+            markChatMessagesAsRead(currentActiveChatId, remoteMsgs);
           }
         }
 
@@ -430,8 +444,14 @@ export default function App() {
 
     const loadChatMessages = async () => {
       try {
-        const targetChat = chats.find((c) => c.id === selectedChatId);
-        const msgs = await fetchMessagesFromDrive(folderConfig.id, selectedChatId, targetChat?.driveFolderId);
+        const targetChat =
+          chatsRef.current.find((c) => c.id === selectedChatId) ||
+          chats.find((c) => c.id === selectedChatId);
+        const msgs = await fetchMessagesFromDrive(
+          folderConfig.id,
+          selectedChatId,
+          targetChat?.driveFolderId
+        );
         if (msgs && msgs.length > 0) {
           setMessagesMap((prev) => ({ ...prev, [selectedChatId]: msgs }));
           markChatMessagesAsRead(selectedChatId, msgs);
@@ -510,7 +530,9 @@ export default function App() {
     // Save to Google Drive in background
     if (folderConfig?.id && syncStatus.connected) {
       try {
-        const targetChat = chats.find((c) => c.id === selectedChatId);
+        const targetChat =
+          chatsRef.current.find((c) => c.id === selectedChatId) ||
+          chats.find((c) => c.id === selectedChatId);
         await saveMessagesToDrive(folderConfig.id, selectedChatId, updatedMessages, targetChat?.driveFolderId);
         await saveChatsToDrive(folderConfig.id, updatedChats);
         setSyncStatus((prev) => ({ ...prev, lastSyncedAt: Date.now() }));
@@ -739,12 +761,21 @@ export default function App() {
 
         // Auto-grant permission on this subfolder to the other invited participants
         for (const p of newChatData.participants) {
-          if (p.email && p.email !== currentUser?.email) {
-            shareFolderWithEmail(subfolderId, p.email, 'writer').catch((err) =>
+          if (p.email && p.email.toLowerCase() !== currentUser?.email?.toLowerCase()) {
+            await shareFolderWithEmail(subfolderId, p.email, 'writer').catch((err) =>
               console.warn(`Could not share subfolder with ${p.email}:`, err)
             );
           }
         }
+
+        // Save room metadata (room.json) & initial empty messages file into shared room subfolder
+        await saveRoomMetadataToDrive(subfolderId, {
+          ...newChatData,
+          id: chatId,
+          createdAt: Date.now(),
+          driveFolderId: subfolderId,
+        });
+        await saveMessagesToDrive(folderConfig.id, chatId, [], subfolderId);
       } catch (err) {
         console.warn('Subfolder creation fallback:', err);
       }
@@ -777,7 +808,6 @@ export default function App() {
 
     if (folderConfig?.id && syncStatus.connected) {
       await saveChatsToDrive(folderConfig.id, updatedChats);
-      await saveMessagesToDrive(folderConfig.id, newChat.id, []);
     }
   };
 
