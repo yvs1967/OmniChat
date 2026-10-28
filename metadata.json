@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp Web Drive Sync",
+  "description": "WhatsApp Web interface synchronized in real-time through a shared Google Drive folder with multimedia messaging, chat rooms, and GitHub Pages deployment guide.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
