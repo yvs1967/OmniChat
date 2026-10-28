@@ -366,15 +366,20 @@ export async function fetchChatsFromDrive(rootFolderId: string): Promise<ChatRoo
 
   // 2. Discover shared chat room folders (owned by user or shared with user by someone else)
   try {
-    const roomFolderQ = `mimeType = 'application/vnd.google-apps.folder' and name contains 'room_chat_' and trashed = false`;
+    const roomFolderQ = `mimeType = 'application/vnd.google-apps.folder' and (name contains 'room' or sharedWithMe = true) and trashed = false`;
     const roomListRes = await driveFetch(
-      `files?q=${encodeURIComponent(roomFolderQ)}&fields=files(id,name,webViewLink,shared,owners)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+      `files?q=${encodeURIComponent(roomFolderQ)}&fields=files(id,name,webViewLink,shared,owners)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`
     );
     const roomListData = await roomListRes.json();
 
     if (roomListData.files && roomListData.files.length > 0) {
       let hasNewRooms = false;
       for (const roomFolder of roomListData.files) {
+        // Skip root folders themselves
+        if (roomFolder.name === ROOT_FOLDER_NAME || roomFolder.name === FALLBACK_FOLDER_NAME || roomFolder.name === 'media') {
+          continue;
+        }
+
         try {
           const roomMeta = await fetchRoomMetadataFromDrive(roomFolder.id);
           if (roomMeta) {
@@ -486,7 +491,8 @@ export async function saveChatsToDrive(rootFolderId: string, chats: ChatRoom[]):
 export async function fetchMessagesFromDrive(
   rootFolderId: string,
   chatId: string,
-  subfolderId?: string
+  subfolderId?: string,
+  markDeliveredByEmail?: string
 ): Promise<ChatMessage[]> {
   const fileName = `messages_${chatId}.json`;
   const cacheKey = `${subfolderId || rootFolderId}_${chatId}`;
@@ -535,7 +541,29 @@ export async function fetchMessagesFromDrive(
     const contentRes = await driveFetch(`files/${fileId}?alt=media&supportsAllDrives=true`);
     const text = await contentRes.text();
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
+    const msgs: ChatMessage[] = Array.isArray(parsed) ? parsed : [];
+
+    // If recipient is fetching, transition any 'sent' messages from others into 'delivered'
+    if (markDeliveredByEmail && msgs.length > 0) {
+      const myEmailLower = markDeliveredByEmail.toLowerCase();
+      let hasUndelivered = false;
+      const updated = msgs.map((m) => {
+        if (m.senderEmail?.toLowerCase() !== myEmailLower && m.status === 'sent') {
+          hasUndelivered = true;
+          return { ...m, status: 'delivered' as const };
+        }
+        return m;
+      });
+
+      if (hasUndelivered) {
+        saveMessagesToDrive(rootFolderId, chatId, updated, subfolderId).catch((err) =>
+          console.warn('Could not save delivered status to Drive:', err)
+        );
+        return updated;
+      }
+    }
+
+    return msgs;
   } catch (err) {
     console.warn(`Could not read messages for ${chatId}:`, err);
     return [];

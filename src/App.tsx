@@ -270,10 +270,34 @@ export default function App() {
       // Fetch chats from Drive
       const driveChats = await fetchChatsFromDrive(folder.id);
 
-      if (driveChats && driveChats.length > 0) {
-        setChats(driveChats);
-        if (!selectedChatId || !driveChats.some((c) => c.id === selectedChatId)) {
-          setSelectedChatId(driveChats[0].id);
+      const myEmailLower = activeUser?.email?.toLowerCase();
+      // On login, any messages sent to this user from others are now delivered to this device!
+      const deliveredChats = driveChats.map((c) => {
+        if (
+          myEmailLower &&
+          c.lastMessage &&
+          c.lastMessage.senderEmail?.toLowerCase() !== myEmailLower &&
+          c.lastMessage.status === 'sent'
+        ) {
+          // Trigger background delivery update in Drive so sender sees double gray ticks immediately
+          fetchMessagesFromDrive(folder.id, c.id, c.driveFolderId, myEmailLower).catch(() => {});
+          return {
+            ...c,
+            lastMessage: {
+              ...c.lastMessage,
+              status: 'delivered' as const,
+            },
+          };
+        }
+        return c;
+      });
+
+      if (deliveredChats && deliveredChats.length > 0) {
+        setChats(deliveredChats);
+        // On desktop, auto-select first chat. On mobile (e.g. Samsung S25), keep null so user lands on chats list!
+        const isDesktop = window.innerWidth >= 768;
+        if (isDesktop && (!selectedChatId || !deliveredChats.some((c) => c.id === selectedChatId))) {
+          setSelectedChatId(deliveredChats[0].id);
         }
       } else {
         // Initialize clean empty chats.json in Drive with zero mock data
@@ -379,9 +403,29 @@ export default function App() {
         // Sync chats list
         const latestChats = await fetchChatsFromDrive(folderId);
         if (latestChats && latestChats.length > 0) {
+          const myEmailLower = currentUser?.email?.toLowerCase();
+          const deliveredChats = latestChats.map((lc) => {
+            if (
+              myEmailLower &&
+              lc.lastMessage &&
+              lc.lastMessage.senderEmail?.toLowerCase() !== myEmailLower &&
+              lc.lastMessage.status === 'sent'
+            ) {
+              fetchMessagesFromDrive(folderId, lc.id, lc.driveFolderId, myEmailLower).catch(() => {});
+              return {
+                ...lc,
+                lastMessage: {
+                  ...lc.lastMessage,
+                  status: 'delivered' as const,
+                },
+              };
+            }
+            return lc;
+          });
+
           setChats((prevChats) => {
-            return latestChats.map((lc) => {
-              if (lc.id === selectedChatId) {
+            return deliveredChats.map((lc) => {
+              if (lc.id === selectedChatIdRef.current) {
                 return { ...lc, unreadCount: 0 };
               }
               const prevChat = prevChats.find((p) => p.id === lc.id);
@@ -394,7 +438,7 @@ export default function App() {
               }
               return {
                 ...lc,
-                unreadCount: lc.id === selectedChatId ? 0 : lc.unreadCount ?? prevChat?.unreadCount ?? 0,
+                unreadCount: lc.id === selectedChatIdRef.current ? 0 : lc.unreadCount ?? prevChat?.unreadCount ?? 0,
               };
             });
           });
@@ -409,7 +453,8 @@ export default function App() {
           const remoteMsgs = await fetchMessagesFromDrive(
             folderId,
             currentActiveChatId,
-            targetChat?.driveFolderId
+            targetChat?.driveFolderId,
+            currentUser?.email || undefined
           );
           if (remoteMsgs && remoteMsgs.length > 0) {
             setMessagesMap((prev) => {
@@ -450,7 +495,8 @@ export default function App() {
         const msgs = await fetchMessagesFromDrive(
           folderConfig.id,
           selectedChatId,
-          targetChat?.driveFolderId
+          targetChat?.driveFolderId,
+          currentUser?.email || undefined
         );
         if (msgs && msgs.length > 0) {
           setMessagesMap((prev) => ({ ...prev, [selectedChatId]: msgs }));
@@ -497,7 +543,7 @@ export default function App() {
       senderAvatar,
       text,
       timestamp: Date.now(),
-      status: 'delivered',
+      status: 'sent',
       media,
       replyTo: replyTo
         ? { id: replyTo.id, text: replyTo.text, senderName: replyTo.senderName }
@@ -519,7 +565,7 @@ export default function App() {
               senderName,
               senderEmail,
               senderId: currentUser?.uid || 'user_self',
-              status: 'delivered' as const,
+              status: 'sent' as const,
             },
             unreadCount: 0,
           }
@@ -897,7 +943,7 @@ export default function App() {
   const activeMessages = selectedChatId ? messagesMap[selectedChatId] || [] : [];
 
   return (
-    <div className={`w-screen h-screen overflow-hidden flex flex-col bg-[#0c1317]`}>
+    <div className="w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-[#0c1317]">
       {/* WhatsApp Web Green Top Banner Decoration */}
       <div className="h-32 bg-[#00a884] absolute top-0 left-0 right-0 z-0 hidden lg:block" />
 

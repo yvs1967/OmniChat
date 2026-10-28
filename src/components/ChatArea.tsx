@@ -857,7 +857,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Bottom Message Input Bar */}
-      <div className="min-h-16 px-3 sm:px-4 py-2.5 bg-[#202c33] border-t border-[#222d34] flex items-center gap-1.5 sm:gap-2 shrink-0 relative z-20">
+      <div className="min-h-16 px-3 sm:px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] bg-[#202c33] border-t border-[#222d34] flex items-center gap-1.5 sm:gap-2 shrink-0 relative z-20">
         {isRecordingAudio ? (
           <AudioVoiceRecorder
             onSendAudio={(blob: Blob, duration: number) => {

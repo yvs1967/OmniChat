@@ -647,7 +647,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Floating Action Button (FAB) */}
       <button
         onClick={onOpenNewChat}
-        className="fixed md:absolute bottom-6 right-6 z-30 w-14 h-14 bg-[#00a884] hover:bg-[#06cf9c] text-[#111b21] rounded-2xl shadow-2xl flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+        className="absolute bottom-6 right-6 z-20 w-14 h-14 bg-[#00a884] hover:bg-[#06cf9c] text-[#111b21] rounded-2xl shadow-2xl flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
         title="Start New Chat"
       >
         <MessageSquarePlus className="w-6 h-6 stroke-[2.2]" />
