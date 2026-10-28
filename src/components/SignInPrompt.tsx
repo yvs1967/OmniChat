@@ -17,76 +17,76 @@ export const SignInPrompt: React.FC<SignInPromptProps> = ({
   onClearError,
 }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111b21] p-4 select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111b21] p-3 sm:p-6 select-none overflow-y-auto">
       {/* Background Top Green Header Bar like WhatsApp Web */}
-      <div className="absolute top-0 left-0 right-0 h-56 bg-[#00a884] z-0" />
+      <div className="absolute top-0 left-0 right-0 h-48 sm:h-56 bg-[#00a884] z-0" />
 
-      {/* Main Login Card */}
-      <div className="relative z-10 w-full max-w-4xl bg-[#202c33] rounded-lg shadow-2xl border border-[#374248] overflow-hidden flex flex-col md:flex-row text-[#e9edef]">
-        {/* Left Column: Instructions and Sign In */}
-        <div className="flex-1 p-8 sm:p-12 flex flex-col justify-between">
-          <div className="space-y-6">
-            {/* Logo and Title */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-[#00a884] flex items-center justify-center shadow-lg">
-                <FolderSync className="w-6 h-6 text-[#111b21]" />
-              </div>
-              <div>
-                <h1 className="text-xl sm:text-2xl font-light tracking-wide text-white">
-                  OmniChat <span className="font-semibold text-[#00a884]">Drive Sync</span>
-                </h1>
-                <p className="text-xs text-[#8696a0]">
-                  Decentralized real-time chat powered by shared Google Drive folders
-                </p>
-              </div>
+      {/* Main Container */}
+      <div className="relative z-10 w-full max-w-4xl bg-[#202c33] rounded-2xl shadow-2xl border border-[#374248] overflow-hidden my-auto flex flex-col text-[#e9edef]">
+        
+        {/* Top Header & Brand Bar */}
+        <div className="px-6 py-6 sm:px-10 sm:py-8 border-b border-[#374248] flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#182229]">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-[#00a884] flex items-center justify-center shadow-lg shadow-[#00a884]/20 shrink-0">
+              <FolderSync className="w-7 h-7 text-[#111b21]" />
             </div>
-
-            {/* Error Banner if auth failed */}
-            {errorMessage && (
-              <div className="p-4 bg-red-500/15 border border-red-500/40 rounded-lg text-xs space-y-2 text-red-200 animate-in fade-in">
-                <div className="font-semibold text-white flex items-center justify-between">
-                  <span>Authentication Setup Notice</span>
-                  {onClearError && (
-                    <button
-                      onClick={onClearError}
-                      className="text-[#8696a0] hover:text-white text-xs"
-                    >
-                      Dismiss
-                    </button>
-                  )}
-                </div>
-                <p className="whitespace-pre-line text-[11px] leading-relaxed text-red-100 font-mono">
-                  {errorMessage}
-                </p>
-              </div>
-            )}
-
-            {/* Steps list */}
-            <div className="space-y-4 pt-2">
-              <h2 className="text-sm font-medium text-[#d1d7db] uppercase tracking-wider text-xs">
-                To use OmniChat with Google Drive:
-              </h2>
-              <ol className="space-y-3 text-sm text-[#8696a0] list-decimal list-inside leading-relaxed">
-                <li>
-                  <span className="text-[#e9edef] font-medium">Sign in with your Google account</span> to connect Google Drive.
-                </li>
-                <li>
-                  The app accesses or creates a private{' '}
-                  <code className="text-[#00a884] bg-[#111b21] px-1 py-0.5 rounded text-xs">
-                    OmniChat_Data
-                  </code>{' '}
-                  folder with isolated room subfolders.
-                </li>
-                <li>
-                  Share this folder with friends or team members to chat and exchange media with zero backend servers!
-                </li>
-              </ol>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                OmniChat <span className="text-xs bg-[#00a884]/20 text-[#00a884] px-2 py-0.5 rounded-full font-medium border border-[#00a884]/40">Drive Sync</span>
+              </h1>
+              <p className="text-xs text-[#8696a0]">
+                Private, Serverless Real-Time Messaging Client Powered by Google Drive
+              </p>
             </div>
           </div>
 
-          {/* Action Button: Official Google Sign-In Button */}
-          <div className="pt-8 space-y-4">
-            <div className="flex flex-col sm:flex-row items-center gap-4">
+          {/* Quick Sign In button in header */}
+          <button
+            type="button"
+            onClick={onSignIn}
+            disabled={isLoading}
+            className="px-5 py-2.5 bg-[#00a884] hover:bg-[#06cf9c] active:scale-95 text-[#111b21] font-semibold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+          >
+            {isLoading ? 'Connecting...' : 'Sign In with Google'}
+          </button>
+        </div>
+
+        {/* Error Banner if auth failed */}
+        {errorMessage && (
+          <div className="mx-6 sm:mx-10 mt-6 p-4 bg-red-500/15 border border-red-500/40 rounded-xl text-xs space-y-2 text-red-200 animate-in fade-in">
+            <div className="font-semibold text-white flex items-center justify-between">
+              <span>Authentication Notice</span>
+              {onClearError && (
+                <button
+                  onClick={onClearError}
+                  className="text-[#8696a0] hover:text-white text-xs underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+            <p className="whitespace-pre-line text-[11px] leading-relaxed text-red-100 font-mono">
+              {errorMessage}
+            </p>
+          </div>
+        )}
+
+        {/* Content Body */}
+        <div className="p-6 sm:p-10 space-y-8 max-h-[65vh] overflow-y-auto scrollbar-thin">
+          
+          {/* Main Google Sign-In Card */}
+          <div className="bg-[#111b21] p-6 rounded-xl border border-[#2a3942] flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="space-y-2 text-left">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#00a884]" />
+                Get Started with OmniChat
+              </h2>
+              <p className="text-xs text-[#8696a0] max-w-lg leading-relaxed">
+                Connect your Google Account to establish your private chat folder on Google Drive. No passwords or separate registration required.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={onSignIn}
@@ -123,7 +123,7 @@ export const SignInPrompt: React.FC<SignInPromptProps> = ({
                     </svg>
                   </div>
                   <span className="gsi-material-button-contents">
-                    {isLoading ? 'Connecting to Google Drive...' : 'Sign in with Google'}
+                    {isLoading ? 'Connecting...' : 'Sign in with Google'}
                   </span>
                 </div>
               </button>
@@ -134,41 +134,94 @@ export const SignInPrompt: React.FC<SignInPromptProps> = ({
                   onClick={onContinueAsGuest}
                   className="text-xs text-[#8696a0] hover:text-[#00a884] underline transition-colors"
                 >
-                  Explore Demo Preview first
+                  Explore preview
                 </button>
               )}
             </div>
-
-            <p className="text-[11px] text-[#8696a0] flex items-center gap-1.5 pt-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00a884]" />
-              Requires Google Drive permission to sync your shared chat files.
-            </p>
           </div>
-        </div>
 
-        {/* Right Column: Simulated QR / Drive Sync Visual */}
-        <div className="w-full md:w-80 bg-[#111b21] p-8 border-t md:border-t-0 md:border-l border-[#374248] flex flex-col items-center justify-center text-center space-y-4">
-          <div className="p-4 bg-white rounded-xl shadow-lg relative group">
-            <div className="w-44 h-44 bg-white flex flex-col items-center justify-center border-4 border-dashed border-[#00a884]/40 rounded-lg p-2">
-              <QrCode className="w-28 h-28 text-[#111b21]" />
-              <div className="text-[10px] text-gray-700 font-mono mt-1 font-semibold flex items-center gap-1">
-                <HardDrive className="w-3 h-3 text-[#00a884]" /> Drive Sync Ready
+          {/* Detailed Features & App Functionality (Google Verification Requirement) */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold text-[#8696a0] uppercase tracking-wider">
+              Application Features & Functionality
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3.5 bg-[#182229] rounded-xl border border-[#2a3942] space-y-1">
+                <span className="text-xs font-semibold text-white block">1-on-1 & Group Chats</span>
+                <p className="text-[11px] text-[#8696a0] leading-relaxed">
+                  Real-time messaging with contact custom nicknames, search filtering, and WhatsApp checkmarks.
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#182229] rounded-xl border border-[#2a3942] space-y-1">
+                <span className="text-xs font-semibold text-white block">Voice Notes & Media</span>
+                <p className="text-[11px] text-[#8696a0] leading-relaxed">
+                  Record web audio voice notes, share photos, exchange documents, and react with emojis.
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#182229] rounded-xl border border-[#2a3942] space-y-1">
+                <span className="text-xs font-semibold text-white block">Serverless Google Drive</span>
+                <p className="text-[11px] text-[#8696a0] leading-relaxed">
+                  Decentralized synchronization: Your messages remain in your own Google Drive storage.
+                </p>
               </div>
             </div>
-            <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-medium p-4">
-              Click "Sign in with Google" to link your Drive folder
-            </div>
           </div>
 
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-[#e9edef] block">
-              Host Anywhere • GitHub Pages
-            </span>
-            <p className="text-[11px] text-[#8696a0] leading-relaxed">
-              Fully static frontend client that speaks directly to Google Drive REST API.
+          {/* Transparent Google Permissions Disclosure (Google Verification Requirement) */}
+          <div className="p-4 bg-[#182229] rounded-xl border border-[#00a884]/30 space-y-3 text-left">
+            <div className="flex items-center gap-2 text-white font-semibold text-xs">
+              <ShieldCheck className="w-4 h-4 text-[#00a884]" />
+              <span>Transparent Data & Google Permissions Notice</span>
+            </div>
+            
+            <p className="text-xs text-[#d1d7db] leading-relaxed">
+              OmniChat requests specific Google OAuth permissions solely to provide its messaging service:
             </p>
+
+            <ul className="text-[11px] text-[#8696a0] space-y-2 list-disc list-inside leading-relaxed">
+              <li>
+                <strong className="text-white">Google Profile & Email:</strong> Used exclusively to identify you to other participants in chats you join or create.
+              </li>
+              <li>
+                <strong className="text-white">Google Drive Access (<code className="text-[#00a884]">drive.file</code> scope):</strong> OmniChat requests limited access <em>strictly to files and folders created by this application</em>. It creates a private <code className="text-[#00a884]">OmniChat_Data</code> folder to hold your conversations. OmniChat cannot view, edit, or access any other personal files in your Google Drive.
+              </li>
+              <li>
+                <strong className="text-white">Zero Third-Party Storage:</strong> OmniChat does not maintain a central database or external server. Your data stays 100% inside your Google account.
+              </li>
+            </ul>
+          </div>
+
+        </div>
+
+        {/* Footer with Mandatory Privacy Policy and Terms of Service Links */}
+        <div className="px-6 py-4 sm:px-10 bg-[#182229] border-t border-[#374248] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#8696a0]">
+          <div className="flex items-center gap-1.5">
+            <span>&copy; 2026 OmniChat. All rights reserved.</span>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-medium">
+            <a
+              href="./privacy.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#00a884] hover:underline transition-colors"
+            >
+              Privacy Policy
+            </a>
+            <span className="text-[#374248]">•</span>
+            <a
+              href="./terms.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#00a884] hover:underline transition-colors"
+            >
+              Terms of Service
+            </a>
           </div>
         </div>
+
       </div>
     </div>
   );
