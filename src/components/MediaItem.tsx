@@ -151,6 +151,58 @@ export const MediaItem: React.FC<MediaItemProps> = ({
     );
   }
 
+  // Video Media (Supports long and large videos)
+  if (media.type === 'video') {
+    return (
+      <div className="mb-2 rounded-md overflow-hidden bg-black/40 relative min-h-[140px] flex items-center justify-center">
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center p-6 space-y-2 text-xs text-[#8696a0]">
+            <RefreshCw className="w-5 h-5 animate-spin text-[#00a884]" />
+            <span>Loading video from Drive...</span>
+          </div>
+        )}
+
+        {loadError && !isLoading && (
+          <div className="flex flex-col items-center justify-center p-4 space-y-2 text-xs text-amber-400">
+            <AlertCircle className="w-5 h-5" />
+            <span>Video not loaded</span>
+            <button
+              onClick={handleRetry}
+              className="px-2 py-1 bg-[#202c33] hover:bg-[#2a3942] rounded text-[11px] text-[#00a884]"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {resolvedUrl && !isLoading && !loadError && (
+          <div className="relative group w-full">
+            <video
+              src={resolvedUrl}
+              controls
+              playsInline
+              preload="metadata"
+              className="max-h-80 w-full rounded bg-black object-contain"
+            />
+            {/* Quick download button */}
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="absolute top-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity z-10"
+              title="Download video"
+            >
+              {isDownloading ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Audio Voice Note
   if (media.type === 'audio') {
     if (isLoading) {

@@ -212,10 +212,18 @@ export default function App() {
       (user, token) => {
         const enrichedUser = applyProfileOverride(user);
         setCurrentUser(enrichedUser);
-        setNeedsAuth(false);
         setIsGuestMode(false);
-        // Connect to Drive
-        initDriveConnection(enrichedUser);
+
+        if (token) {
+          setNeedsAuth(false);
+          // Connect to Drive with valid token
+          initDriveConnection(enrichedUser);
+        } else {
+          // Firebase session exists but Google Drive OAuth token is not present yet
+          if (!isGuestMode) {
+            setNeedsAuth(true);
+          }
+        }
       },
       () => {
         // Not signed in
@@ -260,6 +268,20 @@ export default function App() {
    */
   const initDriveConnection = async (user?: UserProfile | null) => {
     const activeUser = user || currentUser;
+    const token = await getAccessToken();
+    if (!token) {
+      setSyncStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        connected: false,
+        error: null,
+      }));
+      if (!isGuestMode) {
+        setNeedsAuth(true);
+      }
+      return;
+    }
+
     setSyncStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
 
     try {
@@ -641,47 +663,76 @@ export default function App() {
     if (!selectedChatId) return;
 
     const isImage = file.type.startsWith('image/');
-    const fileType = isImage ? 'image' : 'document';
+    const isVideo = file.type.startsWith('video/');
+    const fileType: 'image' | 'video' | 'document' = isImage
+      ? 'image'
+      : isVideo
+      ? 'video'
+      : 'document';
     const targetChat = chats.find((c) => c.id === selectedChatId);
 
-    let mediaAttachment: MediaAttachment;
+    // Create an instant local object URL so the user immediately sees the media in chat
+    const localObjUrl = URL.createObjectURL(file);
+    const tempId = `media_${Date.now()}`;
+    const initialMedia: MediaAttachment = {
+      id: tempId,
+      name: file.name,
+      mimeType: file.type,
+      size: file.size,
+      url: localObjUrl,
+      thumbnailUrl: isImage || isVideo ? localObjUrl : undefined,
+      type: fileType,
+    };
 
+    const displayText = isImage
+      ? 'Shared an image'
+      : isVideo
+      ? 'Shared a video'
+      : `Shared file: ${file.name}`;
+
+    // Optimistically send the message with local media preview immediately
+    await handleSendMessage(displayText, initialMedia);
+
+    // Upload to Google Drive in the background (resumable for large video/photo)
     if (folderConfig?.id && syncStatus.connected) {
       try {
-        mediaAttachment = await uploadMediaToDrive(
+        const driveMedia = await uploadMediaToDrive(
           folderConfig.id,
           file,
           file.name,
           fileType,
           targetChat?.driveFolderId
         );
-      } catch (err) {
-        console.warn('Local preview fallback:', err);
-        const objUrl = URL.createObjectURL(file);
-        mediaAttachment = {
-          id: `media_${Date.now()}`,
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-          url: objUrl,
-          thumbnailUrl: isImage ? objUrl : undefined,
-          type: fileType,
-        };
-      }
-    } else {
-      const objUrl = URL.createObjectURL(file);
-      mediaAttachment = {
-        id: `media_${Date.now()}`,
-        name: file.name,
-        mimeType: file.type,
-        size: file.size,
-        url: objUrl,
-        thumbnailUrl: isImage ? objUrl : undefined,
-        type: fileType,
-      };
-    }
 
-    await handleSendMessage(isImage ? 'Shared an image' : `Shared file: ${file.name}`, mediaAttachment);
+        // Update the message in memory & Drive with the permanent Drive file ID
+        setMessagesMap((prev) => {
+          const currentList = prev[selectedChatId] || [];
+          const updated = currentList.map((m) => {
+            if (m.media && m.media.id === tempId) {
+              return {
+                ...m,
+                media: {
+                  ...m.media,
+                  id: driveMedia.id,
+                  driveFileId: driveMedia.driveFileId,
+                },
+              };
+            }
+            return m;
+          });
+          // Save updated messages with permanent drive file ID
+          saveMessagesToDrive(
+            folderConfig.id,
+            selectedChatId,
+            updated,
+            targetChat?.driveFolderId
+          ).catch((e) => console.warn('Drive sync error on media:', e));
+          return { ...prev, [selectedChatId]: updated };
+        });
+      } catch (err) {
+        console.error('Failed to upload media to Drive:', err);
+      }
+    }
   };
 
   /**

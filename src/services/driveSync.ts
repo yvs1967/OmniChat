@@ -664,6 +664,10 @@ export async function saveMessagesToDrive(
 /**
  * Upload a media attachment (photo, voice note, document) to Google Drive
  */
+/**
+ * Upload a media attachment (photo, video, voice note, document) to Google Drive.
+ * Uses Direct Resumable Upload for files > 5MB to handle large videos/photos fast and reliably.
+ */
 export async function uploadMediaToDrive(
   rootFolderId: string,
   fileBlob: Blob,
@@ -672,37 +676,91 @@ export async function uploadMediaToDrive(
   targetFolderId?: string
 ): Promise<MediaAttachment> {
   const uploadFolderId = targetFolderId || (await getOrCreateMediaFolder(rootFolderId));
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Not authenticated with Google Drive.');
+  }
 
+  const mimeType = fileBlob.type || 'application/octet-stream';
+  const cleanFileName = `${Date.now()}_${fileName}`;
   const metadata = {
-    name: `${Date.now()}_${fileName}`,
+    name: cleanFileName,
     parents: [uploadFolderId],
-    mimeType: fileBlob.type || 'application/octet-stream',
+    mimeType: mimeType,
   };
 
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  form.append('file', fileBlob);
+  let driveFileId: string;
 
-  const res = await driveFetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,mimeType,webContentLink,webViewLink',
-    {
-      method: 'POST',
-      body: form,
+  // For files larger than 4MB (like long videos/photos), use Google Drive's Resumable Upload protocol
+  if (fileBlob.size > 4 * 1024 * 1024) {
+    // 1. Initiate Resumable Session
+    const initRes = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': fileBlob.size.toString(),
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
+
+    if (!initRes.ok) {
+      throw new Error(`Failed to initiate resumable upload: ${initRes.statusText}`);
     }
-  );
 
-  const driveFile = await res.json();
+    const sessionUri = initRes.headers.get('Location');
+    if (!sessionUri) {
+      throw new Error('No upload location returned for resumable upload.');
+    }
+
+    // 2. Upload the file binary directly in one continuous stream
+    const uploadRes = await fetch(sessionUri, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': mimeType,
+      },
+      body: fileBlob,
+    });
+
+    if (!uploadRes.ok) {
+      throw new Error(`Failed to upload file content: ${uploadRes.statusText}`);
+    }
+
+    const resultData = await uploadRes.json();
+    driveFileId = resultData.id;
+  } else {
+    // Standard multipart upload for smaller files / audio notes
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', fileBlob);
+
+    const res = await driveFetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,mimeType,webContentLink,webViewLink',
+      {
+        method: 'POST',
+        body: form,
+      }
+    );
+
+    const driveFile = await res.json();
+    driveFileId = driveFile.id;
+  }
+
   const blobUrl = URL.createObjectURL(fileBlob);
-  mediaBlobUrlCache.set(driveFile.id, blobUrl);
+  mediaBlobUrlCache.set(driveFileId, blobUrl);
 
   return {
-    id: driveFile.id,
+    id: driveFileId,
     name: fileName,
     mimeType: fileBlob.type,
     size: fileBlob.size,
-    driveFileId: driveFile.id,
-    url: blobUrl, // Local preview URL
-    thumbnailUrl: type === 'image' ? blobUrl : undefined,
+    driveFileId: driveFileId,
+    url: blobUrl, // Immediate local preview URL
+    thumbnailUrl: type === 'image' || type === 'video' ? blobUrl : undefined,
     type,
   };
 }

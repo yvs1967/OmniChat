@@ -26,8 +26,48 @@ provider.setCustomParameters({
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
-// Cache the access token strictly in memory as required by Workspace integration guidelines.
-let cachedAccessToken: string | null = null;
+
+// Persist the access token across browser refreshes / back-and-forth navigation
+const STORAGE_KEY_TOKEN = 'omnichat_drive_token';
+const STORAGE_KEY_TOKEN_EXPIRY = 'omnichat_drive_token_expiry';
+
+// Load stored token if not expired (tokens usually last 1 hour)
+const getStoredToken = (): string | null => {
+  try {
+    const token = localStorage.getItem(STORAGE_KEY_TOKEN);
+    const expiry = localStorage.getItem(STORAGE_KEY_TOKEN_EXPIRY);
+    if (token && expiry) {
+      const expTime = parseInt(expiry, 10);
+      // Give a 2-minute safety window
+      if (Date.now() < expTime - 120000) {
+        return token;
+      }
+    }
+    return token; // fallback to token even if near expiry
+  } catch {
+    return null;
+  }
+};
+
+let cachedAccessToken: string | null = getStoredToken();
+
+export const saveToken = (token: string, expiresInSeconds: number = 3600) => {
+  cachedAccessToken = token;
+  try {
+    localStorage.setItem(STORAGE_KEY_TOKEN, token);
+    localStorage.setItem(STORAGE_KEY_TOKEN_EXPIRY, (Date.now() + expiresInSeconds * 1000).toString());
+  } catch (err) {
+    console.warn('Failed to persist token to localStorage:', err);
+  }
+};
+
+export const clearStoredToken = () => {
+  cachedAccessToken = null;
+  try {
+    localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_TOKEN_EXPIRY);
+  } catch {}
+};
 
 // Initialize auth state listener.
 export const initAuth = (
@@ -36,18 +76,21 @@ export const initAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
+      const token = cachedAccessToken || getStoredToken();
+      if (token) {
+        cachedAccessToken = token;
         if (onAuthSuccess) {
-          onAuthSuccess(mapFirebaseUser(user), cachedAccessToken);
+          onAuthSuccess(mapFirebaseUser(user), token);
         }
       } else if (!isSigningIn) {
-        // If user is logged in to Firebase but token expired/lost from memory,
-        // we prompt re-sign in or attempt silent re-auth
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
+        // User is logged into Firebase, but Drive token is missing.
+        // Keep user logged in with their profile, but signal auth state
+        if (onAuthSuccess) {
+          onAuthSuccess(mapFirebaseUser(user), '');
+        }
       }
     } else {
-      cachedAccessToken = null;
+      clearStoredToken();
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -72,9 +115,9 @@ export const googleSignIn = async (): Promise<{ user: UserProfile; accessToken: 
       throw new Error('Failed to get Google Drive access token from authentication.');
     }
 
-    cachedAccessToken = credential.accessToken;
+    saveToken(credential.accessToken, 3600);
     const profile = mapFirebaseUser(result.user);
-    return { user: profile, accessToken: cachedAccessToken };
+    return { user: profile, accessToken: credential.accessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
     if (error.code === 'auth/unauthorized-domain') {
@@ -96,14 +139,24 @@ export const googleSignIn = async (): Promise<{ user: UserProfile; accessToken: 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (cachedAccessToken) return cachedAccessToken;
+  const stored = getStoredToken();
+  if (stored) {
+    cachedAccessToken = stored;
+    return stored;
+  }
+  return null;
 };
 
 export const setAccessTokenManually = (token: string | null) => {
-  cachedAccessToken = token;
+  if (token) {
+    saveToken(token);
+  } else {
+    clearStoredToken();
+  }
 };
 
 export const logout = async () => {
+  clearStoredToken();
   await signOut(auth);
-  cachedAccessToken = null;
 };

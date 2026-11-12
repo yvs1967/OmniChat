@@ -174,7 +174,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
-        accept="image/*,audio/*,application/pdf,.doc,.docx,.txt"
+        accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.txt,.mp4,.mov,.webm,.mkv"
       />
 
       {/* Main Chat Header */}
