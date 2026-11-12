@@ -364,21 +364,67 @@ export async function fetchChatsFromDrive(rootFolderId: string): Promise<ChatRoo
     }
   }
 
-  // 2. Discover shared chat room folders (owned by user or shared with user by someone else)
+  // 2. Discover shared chat room folders & room.json files (owned or sharedWithMe)
   try {
-    const roomFolderQ = `mimeType = 'application/vnd.google-apps.folder' and (name contains 'room' or sharedWithMe = true) and trashed = false`;
+    // A. Query shared folders
+    const roomFolderQ = `mimeType = 'application/vnd.google-apps.folder' and trashed = false and (name contains 'room' or sharedWithMe = true or name = 'chats')`;
     const roomListRes = await driveFetch(
       `files?q=${encodeURIComponent(roomFolderQ)}&fields=files(id,name,webViewLink,shared,owners)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`
     );
     const roomListData = await roomListRes.json();
 
+    const folderCandidates: { id: string; name: string }[] = [];
     if (roomListData.files && roomListData.files.length > 0) {
-      let hasNewRooms = false;
-      for (const roomFolder of roomListData.files) {
-        // Skip root folders themselves
-        if (roomFolder.name === ROOT_FOLDER_NAME || roomFolder.name === FALLBACK_FOLDER_NAME || roomFolder.name === 'media') {
+      for (const f of roomListData.files) {
+        if (f.name === ROOT_FOLDER_NAME || f.name === FALLBACK_FOLDER_NAME || f.name === 'media') {
           continue;
         }
+        if (f.name === 'chats') {
+          // List children inside 'chats'
+          try {
+            const childrenRes = await driveFetch(
+              `files?q=${encodeURIComponent(`'${f.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`
+            );
+            const childrenData = await childrenRes.json();
+            if (childrenData.files) {
+              folderCandidates.push(...childrenData.files);
+            }
+          } catch {}
+          continue;
+        }
+        folderCandidates.push(f);
+      }
+    }
+
+    // B. Also directly search for any room.json or messages_*.json files that were shared with this user!
+    try {
+      const roomFilesQ = `trashed = false and (name = 'room.json' or name contains 'messages_')`;
+      const roomFilesRes = await driveFetch(
+        `files?q=${encodeURIComponent(roomFilesQ)}&fields=files(id,name,parents)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`
+      );
+      const roomFilesData = await roomFilesRes.json();
+      if (roomFilesData.files) {
+        for (const rf of roomFilesData.files) {
+          if (rf.parents && rf.parents.length > 0) {
+            for (const pId of rf.parents) {
+              if (!folderCandidates.some((c) => c.id === pId)) {
+                folderCandidates.push({ id: pId, name: 'room' });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error querying room files:', err);
+    }
+
+    if (folderCandidates.length > 0) {
+      let hasNewRooms = false;
+      const visited = new Set<string>();
+
+      for (const roomFolder of folderCandidates) {
+        if (visited.has(roomFolder.id)) continue;
+        visited.add(roomFolder.id);
 
         try {
           const roomMeta = await fetchRoomMetadataFromDrive(roomFolder.id);
