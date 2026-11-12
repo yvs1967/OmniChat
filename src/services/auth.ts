@@ -2,6 +2,8 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   User,
@@ -74,6 +76,23 @@ export const initAuth = (
   onAuthSuccess?: (user: UserProfile, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Check if returning from a mobile redirect sign-in
+  getRedirectResult(auth)
+    .then((result) => {
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          saveToken(credential.accessToken, 3600);
+          if (onAuthSuccess) {
+            onAuthSuccess(mapFirebaseUser(result.user), credential.accessToken);
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('Redirect auth result check:', err);
+    });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       const token = cachedAccessToken || getStoredToken();
@@ -109,7 +128,27 @@ export const mapFirebaseUser = (user: User): UserProfile => {
 export const googleSignIn = async (): Promise<{ user: UserProfile; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    let result;
+    try {
+      result = await signInWithPopup(auth, provider);
+    } catch (popupErr: any) {
+      // If popup was blocked by mobile browser or closed by user, try redirect or give clear message
+      if (
+        popupErr.code === 'auth/popup-closed-by-user' ||
+        popupErr.code === 'auth/popup-blocked' ||
+        popupErr.code === 'auth/cancelled-popup-request'
+      ) {
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile) {
+          // On mobile devices, redirect flow works 100% reliably without popups
+          await signInWithRedirect(auth, provider);
+          return null;
+        }
+        throw new Error('Sign-in popup was closed or blocked. Please allow popups for this site or try again.');
+      }
+      throw popupErr;
+    }
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to get Google Drive access token from authentication.');
