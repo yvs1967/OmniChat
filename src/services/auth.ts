@@ -17,7 +17,6 @@ export const auth = getAuth(app);
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive',
 ];
 
 const provider = new GoogleAuthProvider();
